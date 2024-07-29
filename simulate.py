@@ -131,7 +131,7 @@ def plot_performance_arb_only(all_prices, duration_seconds, swap_fee_bps):
 ############################################################
 
 def generate_trades(num_blocks, expected_volume_per_block):
-    if True:
+    if False:
         # generates exponentially distributed trades
         values = np.random.exponential(scale=1.0, size=num_blocks)
         values *= expected_volume_per_block
@@ -254,7 +254,7 @@ def plot_performance_noise_only(all_prices, duration_seconds, swap_fee_bps):
     pl.xlabel("Minutes")
     pl.ylabel("Cumulative markouts, $")
     pl.legend()
-    pl.title(f"Markouts for {swap_fee_bps} bps pool, arbitrage & noise traders")
+    pl.title(f"Markouts for {swap_fee_bps} bps pool, noise only")
 
     avg_volume = np.mean(volume)
     print(f"arb and noise: volume={avg_volume / 1e6:.3f} M")

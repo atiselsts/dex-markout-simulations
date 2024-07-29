@@ -25,10 +25,10 @@ For simulations that include noise traders, additionally:
 
 # Contents
 
-* `arbitrage_only.py` - examples where only arbitrage trades are present
-* `arbitrage_and_noise.py` - examples where only arbitrage trades are present
+* `simulate.py` - simulation scenarios
+* `dex.py` - core DEX implementation
 
 # Simulations
 
 The current implementation of price path simulations has significant RAM usage
-and may require several minutes to complete.
+and may require several minutes to complete for a large number of simulations.
