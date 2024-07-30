@@ -37,6 +37,7 @@ class DEX:
         self.reserve_y = POOL_RESERVES_USD
         # -- cumulative metrics
         self.volume = 0
+        self.volume_arb = 0
         self.lp_fees = 0
         self.lvr = 0
         self.sbp_profits = 0
@@ -85,6 +86,7 @@ class DEX:
     def swap_x_to_y(self, amount_in_x, cex_prices, index):
         amount_in_x_without_fee = amount_in_x / self.fee_factor
 
+        assert amount_in_x > amount_in_x_without_fee
         price = self.price()
         self.lp_fees += (amount_in_x - amount_in_x_without_fee) * price
         self.reserve_x += amount_in_x_without_fee
@@ -96,14 +98,14 @@ class DEX:
         self.basefees += self.basefee_usd
         if self.debug_log:
             print("swap x to y", y_out)
-        self.add_markouts(amount_in_x, -y_out, price, cex_prices, index)
+        self.add_markouts(amount_in_x, -y_out, cex_prices, index)
         return y_out
 
 
     def swap_y_to_x(self, amount_in_y, cex_prices, index):
         amount_in_y_without_fee = amount_in_y / self.fee_factor
 
-        price = self.price()
+        assert amount_in_y > amount_in_y_without_fee
         self.lp_fees += amount_in_y - amount_in_y_without_fee
         self.reserve_y += amount_in_y_without_fee
         x_out = amount_in_y_without_fee * self.reserve_x / self.reserve_y
@@ -114,7 +116,7 @@ class DEX:
         self.basefees += self.basefee_usd
         if self.debug_log:
             print("swap y to x", amount_in_y)
-        self.add_markouts(-x_out, amount_in_y, price, cex_prices, index)
+        self.add_markouts(-x_out, amount_in_y, cex_prices, index)
         return x_out
 
 
@@ -180,23 +182,25 @@ class DEX:
             lp_loss_vs_lvr = (single_transaction_lvr - lp_fee) / single_transaction_lvr
             print(f" DEX price: {self.reserve_y/self.reserve_x:.4f}->{new_reserve_y/new_reserve_x:.4f} CEX price: {cex_price:.4f} LP fee={lp_fee:.2f} LVR={single_transaction_lvr:.2f} loss: {100*lp_loss_vs_lvr:.1f}%")
 
-        dex_price = self.reserve_y / self.reserve_x
         self.reserve_x += delta_x
         self.reserve_y += delta_y
 
         # then update the cumulative metrics
-        self.volume += abs(delta_y) + lp_fee
+        trade_volume = abs(delta_y_with_fee)
+        self.volume += trade_volume
+        self.volume_arb += trade_volume
+
         self.lp_fees += lp_fee
         self.lvr += single_transaction_lvr
         self.sbp_profits += sbp_profit
         self.basefees += self.basefee_usd
         self.num_tx += 1
         if include_markouts:
-            self.add_markouts(delta_x_with_fee, delta_y_with_fee, dex_price, cex_prices, index)
+            self.add_markouts(delta_x_with_fee, delta_y_with_fee, cex_prices, index)
 
         return True
 
-    def add_markouts(self, delta_x, delta_y, dex_price, cex_prices, index):
+    def add_markouts(self, delta_x, delta_y, cex_prices, index):
         cex_price = cex_prices[index]
         execution_price = abs(delta_y / delta_x)
         for markout_minutes in self.markouts.keys():

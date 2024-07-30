@@ -14,13 +14,13 @@ pl.rcParams["savefig.dpi"] = 200
 # the volatility of ETH price per one year - approximately matches the recent year's data
 ETH_VOLATILITY = 0.5
 
-ETH_VOLATILITY_PER_SECOND = ETH_VOLATILITY / np.sqrt(365 * 24 * 60 * 60)
+BLOCK_TIME_SEC = 12
+
+ETH_VOLATILITY_PER_BLOCK = ETH_VOLATILITY / np.sqrt(365 * 24 * 60 * 60 / BLOCK_TIME_SEC)
 
 SIMULATION_DURATION_SEC = 86400
 
-NUM_SIMULATIONS = 50
-
-BLOCK_TIME = 12
+NUM_SIMULATIONS = 200
 
 ############################################################
 
@@ -40,7 +40,7 @@ def get_price_paths(n, sigma, mu, M=NUM_SIMULATIONS):
 def estimate_performance(prices, noise_trades=None, swap_fee_bps=None, basefee_usd=None, include_arb=True):
     dex = DEX()
     #dex.debug_log = True
-    dex.block_time_sec = BLOCK_TIME
+    dex.block_time_sec = BLOCK_TIME_SEC
     if swap_fee_bps is not None:
         dex.set_fee_bps(swap_fee_bps)
     if basefee_usd is not None:
@@ -65,7 +65,7 @@ def estimate_performance(prices, noise_trades=None, swap_fee_bps=None, basefee_u
                 dex.swap_y_to_x(trade_amount, prices, i)
                 lp_pnl.append(dex.lp_fees - dex.lvr)
 
-    return dex.lvr, dex.lp_fees, dex.volume, dex.markouts, lp_pnl
+    return dex.lvr, dex.lp_fees, dex.volume, dex.volume_arb, dex.markouts, lp_pnl
 
 
 ############################################################
@@ -83,8 +83,6 @@ def plot_performance_arb_only(all_prices, duration_seconds, swap_fee_bps):
     fig, ax = pl.subplots()
     fig.set_size_inches((5, 3.5))
 
-    num_blocks = int(duration_seconds // BLOCK_TIME)
-
     all_volume = []
     all_markouts_0 = []
     all_markouts_1 = []
@@ -95,9 +93,8 @@ def plot_performance_arb_only(all_prices, duration_seconds, swap_fee_bps):
 
     for sim in range(all_prices.shape[1]):
         prices = all_prices[:,sim]
-        if num_blocks is not None:
-            prices = prices[:num_blocks]
-        lvr, lp_fees, volume, markouts, lp_pnl = \
+        num_blocks = len(prices)
+        lvr, lp_fees, volume, arb_volume, markouts, lp_pnl = \
             estimate_performance(prices, None, swap_fee_bps)
         all_volume.append(volume)
         all_markouts_0.append(markouts[0])
@@ -123,7 +120,7 @@ def plot_performance_arb_only(all_prices, duration_seconds, swap_fee_bps):
     #pl.ylim(-100, +10)
     pl.title(f"Markouts for {swap_fee_bps} bps pool, arbitrage only")
 
-    avg_volume = np.mean(volume)
+    avg_volume = np.mean(all_volume)
     print(f"arb only: volume={avg_volume / 1e6:.2f} M")
 
     pl.savefig(f"markouts_arb_only_{swap_fee_bps}bps.png", bbox_inches='tight')
@@ -152,13 +149,15 @@ def generate_trades(num_blocks, expected_volume_per_block):
     values[indices[:num_to_invert]] *= -1
     return values
 
-# try to match the noise trades and normal trades 50:50
-def get_expected_volume_per_block(swap_fee_bps):
-    return ({
-        5: 12e6,
-        30: 1.8e6,
-        100: 0.01e6
-    }[swap_fee_bps] / 7200) / 5
+def get_expected_noise_volume_per_block(swap_fee_bps):
+    expected_arb_volume = ({
+        5: 133e6,
+        30: 27e6,
+        100: 8.3e6
+    }[swap_fee_bps] / 7200)
+
+    # try to match the noise trades and arbitrage trades in proportion 1:3 (so that 25% is arbitrage)
+    return expected_arb_volume / 3
 
 ############################################################
 
@@ -166,25 +165,24 @@ def plot_performance_both(all_prices, duration_seconds, swap_fee_bps):
     fig, ax = pl.subplots()
     fig.set_size_inches((5, 3.5))
 
-    num_blocks = int(duration_seconds // BLOCK_TIME)
-
     all_markouts_0 = []
     all_markouts_1 = []
     all_markouts_3 = []
     all_markouts_10 = []
     all_markouts_30 = []
     all_volume = []
+    all_arb_volume = []
     all_lp_pnl = []
 
-    noise_trades = generate_trades(num_blocks, get_expected_volume_per_block(swap_fee_bps))
+    num_blocks = len(all_prices[:,0])
+    noise_trades = generate_trades(num_blocks, get_expected_noise_volume_per_block(swap_fee_bps))
 
     for sim in range(all_prices.shape[1]):
         prices = all_prices[:,sim]
-        if num_blocks is not None:
-            prices = prices[:num_blocks]
-        lvr, lp_fees, volume, markouts, lp_pnl = \
+        lvr, lp_fees, volume, arb_volume, markouts, lp_pnl = \
             estimate_performance(prices, noise_trades, swap_fee_bps)
         all_volume.append(volume)
+        all_arb_volume.append(arb_volume)
         all_markouts_0.append(markouts[0])
         all_markouts_1.append(markouts[1])
         all_markouts_3.append(markouts[3])
@@ -206,8 +204,10 @@ def plot_performance_both(all_prices, duration_seconds, swap_fee_bps):
     pl.legend()
     pl.title(f"Markouts for {swap_fee_bps} bps pool, arbitrage & noise traders")
 
-    avg_volume = np.mean(volume)
-    print(f"arb and noise: volume={avg_volume / 1e6:.3f} M")
+    avg_volume = np.mean(all_volume)
+    avg_arb_volume = np.mean(all_arb_volume)
+    arbitrage_percentage = 100 * avg_arb_volume / avg_volume
+    print(f"arb and noise: volume={avg_volume / 1e6:.3f} M, arbitrage %: {arbitrage_percentage:.2f}")
 
     pl.savefig(f"markouts_both_{swap_fee_bps}bps.png", bbox_inches='tight')
 
@@ -217,8 +217,6 @@ def plot_performance_noise_only(all_prices, duration_seconds, swap_fee_bps):
     fig, ax = pl.subplots()
     fig.set_size_inches((5, 3.5))
 
-    num_blocks = int(duration_seconds // BLOCK_TIME)
-
     all_markouts_0 = []
     all_markouts_1 = []
     all_markouts_3 = []
@@ -227,13 +225,12 @@ def plot_performance_noise_only(all_prices, duration_seconds, swap_fee_bps):
     all_volume = []
     all_lp_pnl = []
 
-    noise_trades = generate_trades(num_blocks, get_expected_volume_per_block(swap_fee_bps))
+    num_blocks = len(all_prices[:,0])
+    noise_trades = generate_trades(num_blocks, get_expected_noise_volume_per_block(swap_fee_bps))
 
     for sim in range(all_prices.shape[1]):
         prices = all_prices[:,sim]
-        if num_blocks is not None:
-            prices = prices[:num_blocks]
-        lvr, lp_fees, volume, markouts, lp_pnl = \
+        lvr, lp_fees, volume, arb_volume, markouts, lp_pnl = \
             estimate_performance(prices, noise_trades, swap_fee_bps, include_arb=False)
         all_volume.append(volume)
         all_markouts_0.append(markouts[0])
@@ -256,18 +253,14 @@ def plot_performance_noise_only(all_prices, duration_seconds, swap_fee_bps):
     pl.legend()
     pl.title(f"Markouts for {swap_fee_bps} bps pool, noise only")
 
-    avg_volume = np.mean(volume)
-    print(f"arb and noise: volume={avg_volume / 1e6:.3f} M")
-
     pl.savefig(f"markouts_noise_only_{swap_fee_bps}bps.png", bbox_inches='tight')
 
 ############################################################
 
 def simulate_some_blocks():
     n = SIMULATION_DURATION_SEC
-    all_prices = get_price_paths(n, sigma=ETH_VOLATILITY_PER_SECOND, mu=0.0)
+    all_prices = get_price_paths(n // BLOCK_TIME_SEC, sigma=ETH_VOLATILITY_PER_BLOCK, mu=0.0)
     for swap_fee_bps in [5, 30]:
-    #for swap_fee_bps in [5]:
         plot_performance_arb_only(all_prices, SIMULATION_DURATION_SEC - 2000, swap_fee_bps)
         plot_performance_both(all_prices, SIMULATION_DURATION_SEC - 2000, swap_fee_bps)
         plot_performance_noise_only(all_prices, SIMULATION_DURATION_SEC - 2000, swap_fee_bps)
